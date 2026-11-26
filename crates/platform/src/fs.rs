@@ -40,6 +40,12 @@ pub fn read_file_capped(path: &Path, max: u64) -> Result<Vec<u8>, ToolError> {
             .with_remediation("Raise the size limit parameter if you really want to read it."));
     }
     let mut bytes = Vec::new();
+    // Reserve the whole file up front: growing by doubling could ask for twice its size, and a
+    // failed reservation is an error here instead of the allocator aborting the program.
+    let want = usize::try_from(metadata.len().min(max)).unwrap_or(usize::MAX);
+    bytes.try_reserve_exact(want).map_err(|_| {
+        ToolError::new(ErrorCode::OverLimit, format!("{} is {} bytes, more than this computer can hold in memory", path.display(), metadata.len()))
+    })?;
     (&mut file).take(max).read_to_end(&mut bytes).map_err(|e| ToolError::io(path.display(), e))?;
     let mut extra = [0u8; 1];
     match file.read_exact(&mut extra) {
@@ -250,5 +256,31 @@ mod tests {
         std::fs::write(&a, "second").unwrap();
         assert!(!backup_once(&a, &b).unwrap());
         assert_eq!(std::fs::read_to_string(&b).unwrap(), "first");
+    }
+
+    #[test]
+    fn a_capped_read_returns_the_bytes_and_refuses_a_larger_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.bin");
+        std::fs::write(&path, b"abc").unwrap();
+        assert_eq!(read_file_capped(&path, 3).unwrap(), b"abc");
+        let wide = dir.path().join("wide.bin");
+        std::fs::File::create(&wide).unwrap().set_len(64).unwrap();
+        let err = read_file_capped(&wide, 8).unwrap_err();
+        assert_eq!(err.code, ErrorCode::OverLimit);
+        assert!(err.message.contains("64 bytes"), "{err:?}");
+    }
+
+    #[test]
+    fn a_read_that_cannot_reserve_its_buffer_is_refused() {
+        let mut probe = Vec::<u8>::new();
+        assert!(probe.try_reserve_exact(1 << 40).is_err(), "the allocator granted a reservation this test treats as impossible");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wide.bin");
+        let len = 1 << 40;
+        std::fs::File::create(&path).unwrap().set_len(len).unwrap();
+        let err = read_file_capped(&path, len).unwrap_err();
+        assert_eq!(err.code, ErrorCode::OverLimit);
+        assert!(err.message.contains("hold in memory"), "{err:?}");
     }
 }
