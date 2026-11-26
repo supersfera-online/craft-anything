@@ -246,6 +246,35 @@ pub struct RawSpec {
     pub entry_point: u64,
 }
 
+/// SHA-256 of a regular file, read in pieces so a changed-file check does not hold the
+/// file in memory a second time. A file over [`MAX_TARGET_BYTES`], including one whose
+/// metadata says 0 bytes and then keeps producing data, is refused.
+fn sha256_file(path: &Path) -> Result<String, ToolError> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+    let (mut file, metadata) = craft_anything_platform::fs::open_regular_file(path)?;
+    if metadata.len() > MAX_TARGET_BYTES {
+        return Err(ToolError::new(ErrorCode::OverLimit, format!("{} is {} bytes; the limit is {MAX_TARGET_BYTES}", path.display(), metadata.len()))
+            .with_remediation("Open a smaller file."));
+    }
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    let mut taken = 0u64;
+    loop {
+        let n = file.read(&mut buf).map_err(|e| ToolError::io(path.display(), e))?;
+        if n == 0 {
+            break;
+        }
+        taken = taken.saturating_add(n as u64);
+        if taken > MAX_TARGET_BYTES {
+            return Err(ToolError::new(ErrorCode::OverLimit, format!("{} contains more than {MAX_TARGET_BYTES} bytes", path.display()))
+                .with_remediation("Open a smaller file."));
+        }
+        hasher.update(buf.get(..n).unwrap_or_default());
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 impl Target {
     /// Load a file or directory.
     pub fn load(path: &Path) -> Result<Target, ToolError> {
@@ -282,8 +311,8 @@ impl Target {
         if self.kind == TargetKind::Directory {
             return Ok(());
         }
-        match craft_anything_platform::fs::read_file_capped(&self.path, MAX_TARGET_BYTES) {
-            Ok(b) if sha256_hex(&b) == self.sha256 => Ok(()),
+        match sha256_file(&self.path) {
+            Ok(h) if h == self.sha256 => Ok(()),
             Ok(_) => Err(ToolError::new(ErrorCode::FileChanged, format!("{} changed on disk since it was opened", self.path.display()))
                 .with_remediation("Open it again to analyse the new version.")),
             Err(e) => Err(e),
@@ -327,5 +356,26 @@ mod tests {
         assert_eq!(sniff(b"", "empty.txt"), TargetKind::Unknown);
         assert_eq!(TargetKind::Text.id(), "text");
         assert!(TargetKind::Text.plain().contains("text file"));
+    }
+
+    #[test]
+    fn a_file_hashed_in_pieces_matches_hashing_it_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.bin");
+        let bytes: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(sha256_file(&path).unwrap(), sha256_hex(&bytes));
+        let target = Target::load(&path).unwrap();
+        target.check_unchanged().unwrap();
+        std::fs::write(&path, b"changed").unwrap();
+        assert_eq!(target.check_unchanged().unwrap_err().code, ErrorCode::FileChanged);
+    }
+
+    #[test]
+    fn hashing_in_pieces_still_refuses_a_file_over_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.bin");
+        std::fs::File::create(&path).unwrap().set_len(MAX_TARGET_BYTES + 1).unwrap();
+        assert_eq!(sha256_file(&path).unwrap_err().code, ErrorCode::OverLimit);
     }
 }
