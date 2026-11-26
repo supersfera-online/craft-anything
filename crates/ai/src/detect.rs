@@ -686,6 +686,16 @@ mod tests {
         assert_eq!(probe_local("LM Studio", &url).unwrap().suggestion.model, "gemma");
     }
 
+    /// Lemonade's local setup listens on its own port, so the same scan that finds LM Studio finds it.
+    #[test]
+    fn a_lemonade_server_on_its_usual_port_is_probed() {
+        let probed = servers_to_probe(None, Vec::new());
+        assert!(
+            probed.iter().any(|(name, url)| name == "Lemonade" && url.ends_with(":13305/v1")),
+            "the local server scan includes Lemonade's usual address: {probed:?}"
+        );
+    }
+
     #[test]
     fn only_addresses_on_this_computer_or_network_count() {
         for url in [
