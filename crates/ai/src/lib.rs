@@ -554,6 +554,19 @@ pub struct AiHub {
     backend_edits: Mutex<()>,
 }
 
+/// A named program for a local Grok Build backend has to be that program. Checked before the
+/// settings are written, and skipped for a backend on another computer.
+fn saved_grok_program(entry: &BackendEntry) -> Result<(), ToolError> {
+    let remote = entry.config.ssh_host.as_deref().is_some_and(|host| !host.trim().is_empty());
+    if remote || entry.config.kind != BackendKind::AgentCli || entry.config.model != "grok" {
+        return Ok(());
+    }
+    if let Some(program) = entry.options.command.as_deref().map(str::trim).filter(|program| !program.is_empty()) {
+        crate::cli_agents::adapters::require_grok_program(program)?;
+    }
+    Ok(())
+}
+
 impl AiHub {
     pub fn new(engine: Arc<Engine>) -> Self {
         AiHub { engine, settings_path: None, keys: KeyStore::system(), backend_edits: Mutex::new(()) }
@@ -830,6 +843,8 @@ impl AiHub {
             }
             check(host, &program, cancel)?;
         }
+        // A named program for Grok Build has to be that program: another tool shares the file name.
+        saved_grok_program(&entry)?;
         // A Connect job cancelled during the check leaves nothing behind. After this, the save is
         // completed even if the job is cancelled meanwhile: a key and its configuration go
         // together, never one without the other.
@@ -885,6 +900,7 @@ impl AiHub {
                 .with_remediation("Pick the agent's command-line program instead, such as `agy`, or clear the program to use the usual one."));
         }
         b.options.command = command.map(str::to_string);
+        saved_grok_program(b)?;
         self.save_config(&cfg)?;
         Ok(true)
     }

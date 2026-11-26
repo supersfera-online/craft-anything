@@ -397,6 +397,32 @@ fn a_coding_agent_test_says_it_only_checked_the_version() {
     assert_eq!((r.program.as_deref(), r.saved_program_replaced), (Some("cargo"), None), "the saved program ran");
 }
 
+/// Saving a program for Grok Build runs it with `--version` first and keeps nothing when it isn't Grok.
+#[cfg(unix)]
+#[test]
+fn saving_a_grok_program_checks_that_it_is_grok() {
+    use std::os::unix::fs::PermissionsExt;
+    let (h, dir) = hub();
+    let script = |name: &str, text: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, format!("#!/bin/sh\nprintf '%s\\n' '{text}'\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    };
+    let other = script("other", "some-other-program 1.0");
+    let config = BackendConfig { name: "Grok Build".into(), kind: BackendKind::AgentCli, model: "grok".into(), base_url: None, ssh_host: None, enabled: true };
+    let refused = BackendEntry { config: config.clone(), options: BackendOptions { command: Some(other.display().to_string()), ..Default::default() } };
+    let err = h.add_backend_with(refused, None).unwrap_err();
+    assert!(err.message.contains("doesn't say"), "{}", err.message);
+    assert!(h.config().get("Grok Build").is_none(), "a refused program is not saved");
+    h.add_backend_with(BackendEntry { config, options: BackendOptions::default() }, None).unwrap();
+    assert!(h.set_command("Grok Build", Some(other.to_str().unwrap())).unwrap_err().message.contains("doesn't say"));
+    assert!(h.config().get("Grok Build").unwrap().options.command.is_none());
+    let grok = script("grok", "grok version 1.2.3");
+    assert!(h.set_command("Grok Build", Some(grok.to_str().unwrap())).unwrap());
+    assert_eq!(h.config().get("Grok Build").unwrap().options.command.as_deref(), Some(grok.to_str().unwrap()));
+}
+
 #[cfg(unix)]
 #[test]
 /// The selected Codex CLI checks sign-in without a prompt or exposing raw status output.
