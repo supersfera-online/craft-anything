@@ -130,6 +130,11 @@ impl CraftApp {
     /// What builds when the person doesn't choose: the default from Settings → AI, else an agent
     /// app found on this computer.
     pub fn default_builder(&self) -> Option<String> {
+        // With local_first on, Make names a local server. A program that is only set up or found
+        // is not offered as the unnamed choice.
+        if let Some(local) = &self.local_builders {
+            return local.first().cloned();
+        }
         craft_anything_ai::default_builder(&self.backends, self.builder.as_deref()).or_else(|| self.found_agents().next()).map(|b| b.name.clone())
     }
 
@@ -509,6 +514,37 @@ pub fn need_builder_modal(app: &mut CraftApp, ui: &mut Ui, start: bool, close: &
             }
         });
     });
+}
+
+#[cfg(test)]
+mod local_first_tests {
+    use crate::demo;
+    use craft_anything_ai::{BackendConfig, BackendKind};
+
+    fn backend(name: &str, kind: BackendKind, model: &str, base_url: Option<&str>) -> BackendConfig {
+        BackendConfig { name: name.into(), kind, model: model.into(), base_url: base_url.map(str::to_string), ssh_host: None, enabled: true }
+    }
+
+    #[test]
+    fn the_build_hint_names_the_local_server_when_local_first_is_on() {
+        let mut app = demo::app(demo::engine(craft_anything_engine::Mode::Experienced, true));
+        app.hub.add_backend(backend("Claude Code", BackendKind::AgentCli, "claude-code", None), None).unwrap();
+        app.hub.add_backend(backend("Lemonade", BackendKind::OpenaiCompatible, "qwen", Some("http://127.0.0.1:13305/v1")), None).unwrap();
+        app.backends = app.hub.backends();
+        app.local_builders = crate::local_builders(&app.hub.config());
+        assert_eq!(app.default_builder().as_deref(), Some("Claude Code"), "the usual name while the setting is off");
+
+        let mut cfg = app.hub.config();
+        cfg.local_first = true;
+        app.hub.save_config(&cfg).unwrap();
+        app.local_builders = crate::local_builders(&app.hub.config());
+        assert_eq!(app.default_builder().as_deref(), Some("Lemonade"));
+
+        cfg.backends.retain(|b| b.config.name != "Lemonade");
+        app.hub.save_config(&cfg).unwrap();
+        app.local_builders = crate::local_builders(&app.hub.config());
+        assert_eq!(app.default_builder(), None, "no local server: nothing is named implicitly");
+    }
 }
 
 #[cfg(test)]

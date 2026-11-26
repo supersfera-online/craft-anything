@@ -310,6 +310,16 @@ pub struct AiConfig {
     /// prompt caching survives restarts (and tests stay inside their own settings file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install_id: Option<String>,
+    /// When on, Make names a local server as what builds, instead of a program found on this
+    /// computer. Off by default, and left out of the settings file until it is turned on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local_first: bool,
+}
+
+/// Whether a backend is an OpenAI-compatible server on this computer or its local network (no
+/// address means the local default).
+pub fn is_local(b: &BackendEntry) -> bool {
+    b.config.kind == BackendKind::OpenaiCompatible && b.config.base_url.as_deref().is_none_or(crate::detect::on_this_network)
 }
 
 pub fn role_key(r: Role) -> &'static str {
@@ -565,5 +575,18 @@ mod tests {
         assert_eq!(one("model = \"claude-code\""), ("claude-code".into(), None));
         // Maki named by its program runs Maki's own adapter, not `maki <prompt>` (its terminal interface).
         assert_eq!(one("model = \"anthropic/claude-sonnet-4-6\"\ncommand = \"maki\""), ("maki".into(), Some("anthropic/claude-sonnet-4-6".into())));
+    }
+
+    #[test]
+    fn local_first_is_off_unless_the_settings_say_so() {
+        let off = AiConfig::default();
+        assert!(!off.local_first);
+        assert!(!off.to_table().unwrap().contains_key("local_first"));
+        let raw: toml::Table = toml::from_str("local_first = true\n").unwrap();
+        let on = AiConfig::from_table(&raw).unwrap();
+        assert!(on.local_first);
+        assert!(on.to_table().unwrap().contains_key("local_first"));
+        let old: toml::Table = toml::from_str("").unwrap();
+        assert!(!AiConfig::from_table(&old).unwrap().local_first, "a settings file from before the key still reads");
     }
 }

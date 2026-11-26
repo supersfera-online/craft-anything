@@ -31,7 +31,7 @@ pub mod window;
 
 pub use agent::FULL_TOOLS_BUDGET;
 pub use cli_agents::models::{AgentModel, ModelContext};
-pub use config::{AiConfig, BackendEntry, BackendOptions, Price, ToolList};
+pub use config::{AiConfig, BackendEntry, BackendOptions, Price, ToolList, is_local};
 pub use failure::{FailureKind, TurnFailure};
 pub use keys::KeyStore;
 pub use model::Effort;
