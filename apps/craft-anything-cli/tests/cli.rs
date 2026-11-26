@@ -472,3 +472,32 @@ fn uninstall_text_shows_why_a_client_blocks_it_and_the_fix() {
     }
     assert_eq!(std::fs::read(cursor.join("mcp.json")).unwrap(), [0xffu8, 0xfe, 0x00]);
 }
+
+#[test]
+fn use_local_dry_run_does_not_write_settings() {
+    let cfg = tempfile::tempdir().unwrap();
+    let out =
+        cli(&["ai", "use-local", "--dry-run", "--format", "json", "--lemonade", "http://127.0.0.1:9/v1", "--lmstudio", "http://127.0.0.1:9/v1"], cfg.path());
+    assert!(out.success, "{}", String::from_utf8_lossy(&out.stderr));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["result"]["changed"], json!(false));
+    assert!(v["result"]["found"].as_array().is_some_and(|found| found.is_empty()));
+    let saved = std::fs::read_to_string(cfg.path().join("config.toml")).unwrap_or_default();
+    assert!(!saved.contains("Lemonade") && !saved.contains("LM Studio"), "{saved}");
+}
+
+#[cfg(unix)]
+#[test]
+fn use_local_checks_the_program_before_saving() {
+    use std::os::unix::fs::PermissionsExt;
+    let cfg = tempfile::tempdir().unwrap();
+    let program = cfg.path().join("agent");
+    std::fs::write(&program, "#!/bin/sh\nprintf '%s\\n' 'some other program 1.0'\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let out = cli(&["ai", "use-local", "--format", "json", "--grok", program.to_str().unwrap()], cfg.path());
+    assert!(!out.success, "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("doesn't say"), "{text}");
+    let saved = std::fs::read_to_string(cfg.path().join("config.toml")).unwrap_or_default();
+    assert!(!saved.contains("Grok Build") && !saved.contains("Lemonade"), "{saved}");
+}

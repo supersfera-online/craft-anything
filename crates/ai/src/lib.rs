@@ -17,6 +17,7 @@ pub use craft_anything_engine::failure_log;
 pub mod http;
 pub mod key_tools;
 pub mod keys;
+pub mod local_setup;
 pub mod model;
 pub mod model_options;
 pub mod model_tools;
@@ -540,6 +541,7 @@ pub fn tools() -> Vec<craft_anything_engine::ToolSpec> {
     v.extend(key_tools::specs());
     v.extend(model_tools::specs());
     v.extend(model_options::specs());
+    v.extend(local_setup::specs());
     v
 }
 

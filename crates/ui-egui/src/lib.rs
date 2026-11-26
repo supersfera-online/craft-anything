@@ -510,6 +510,8 @@ pub struct CraftApp {
     /// Why an expected coding agent may be missing, from the last scan.
     pub detect_hints: Vec<craft_anything_ai::detect::DetectHint>,
     pub detecting: bool,
+    /// The local-server setup, while that tool is running.
+    local_setup_job: Option<u64>,
     /// Local agent checks: None while the worker runs, then a credential-free status or error.
     pub agent_connections: std::collections::BTreeMap<String, Option<Result<String, String>>>,
     /// Which agent owns each pending check, including failures before the worker body starts.
@@ -680,6 +682,7 @@ impl CraftApp {
             detected: None,
             detect_hints: Vec::new(),
             detecting: false,
+            local_setup_job: None,
             agent_connections: Default::default(),
             agent_connection_jobs: Default::default(),
             backend_choices: 0,
@@ -1245,6 +1248,22 @@ impl CraftApp {
             ) => game_files::tool_done(self, job, tool, params, r),
             // The Game files screen's look at a picked game.
             ("core_target_triage", r) => game_files::tool_done(self, job, tool, params, r),
+            ("ai_use_local", Ok(v)) => {
+                self.local_setup_job = None;
+                self.refresh_backends();
+                let named = v["servers"].as_array().and_then(|servers| servers.first()).and_then(Value::as_str);
+                self.toast(
+                    match named {
+                        Some(name) => i18n::trf("Using {name}.", &[("name", name)]),
+                        None => tr("No local server answered."),
+                    },
+                    named.is_none(),
+                );
+            }
+            ("ai_use_local", Err(e)) => {
+                self.local_setup_job = None;
+                self.toast(e.for_people(), true);
+            }
             (_, Ok(_)) => {}
             (_, Err(e)) if clean_room::is_refusal(&e) => self.state.modal = Some(state::Modal::DeepMode),
             (_, Err(e)) => self.toast(e.for_people(), true),

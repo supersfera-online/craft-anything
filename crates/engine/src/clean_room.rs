@@ -90,6 +90,7 @@ pub const TOOLS: &[&str] = &[
     "settings_set",
     "ai_models_list",
     "ai_model_set",
+    "ai_use_local",
     "engines_list",
     "engines_install",
     "engines_app_open",

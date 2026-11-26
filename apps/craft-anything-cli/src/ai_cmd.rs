@@ -57,6 +57,21 @@ pub enum AiCommand {
         #[arg(long)]
         acp: bool,
     },
+    /// Add Lemonade and LM Studio when they answer, and use the first for every role.
+    UseLocal {
+        /// Lemonade Server's address.
+        #[arg(long, default_value = "http://127.0.0.1:13305/v1")]
+        lemonade: String,
+        /// LM Studio's address.
+        #[arg(long, default_value = "http://127.0.0.1:1234/v1")]
+        lmstudio: String,
+        /// Grok Build's program, checked with `--version` and added last in the fallback chain.
+        #[arg(long)]
+        grok: Option<String>,
+        /// Report what was found and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Remove a backend.
     Remove { name: String },
     /// Show, replace or forget the key saved in the app for an API backend (the key is never printed).
@@ -237,11 +252,15 @@ fn read_key(key_env: &Option<String>, key_stdin: bool) -> Result<Option<String>,
 /// Dispatch AI configuration, discovery and model-selection commands through the shared hub.
 /// Render results in the requested format and return an exit status for success or failure.
 pub fn ai(cli: &Cli, c: &AiCommand, f: Format) -> u8 {
+    if let AiCommand::UseLocal { lemonade, lmstudio, grok, dry_run } = c {
+        return use_local(cli, lemonade, lmstudio, grok.as_deref(), *dry_run, f);
+    }
     let hub = match hub(cli) {
         Ok(h) => h,
         Err(e) => return fail(&e, f),
     };
     match c {
+        AiCommand::UseLocal { lemonade, lmstudio, grok, dry_run } => use_local(cli, lemonade, lmstudio, grok.as_deref(), *dry_run, f),
         AiCommand::List => {
             let v: Vec<Value> = hub
                 .backends()
@@ -524,4 +543,23 @@ pub fn doctor_checks() -> Vec<craft_anything_setup::Check> {
                 .fix(format!("Run `craft-anything-cli ai test {name}` for details.")),
         })
         .collect()
+}
+
+/// `ai use-local` runs the same tool the window and MCP use, so a dry run never writes settings.
+fn use_local(cli: &Cli, lemonade: &str, lmstudio: &str, grok: Option<&str>, dry_run: bool, f: Format) -> u8 {
+    let engine = match make_engine(cli.project.as_deref(), cli.deep_for_run()) {
+        Ok(engine) => engine,
+        Err(e) => return fail(&e, f),
+    };
+    let params = json!({"lemonade": lemonade, "lmstudio": lmstudio, "grok": grok, "dry_run": dry_run});
+    let cancel = crate::interrupt_token();
+    let opts =
+        craft_anything_engine::CallOptions::new(craft_anything_engine::Caller::Cli).with_consent(craft_anything_engine::Consent::Granted).with_cancel(cancel);
+    match engine.call("ai_use_local", params, opts) {
+        Ok(out) => {
+            emit(&out.to_json(), f);
+            0
+        }
+        Err(e) => fail(&e, f),
+    }
 }

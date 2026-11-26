@@ -993,6 +993,12 @@ fn ai(app: &mut CraftApp, ui: &mut Ui) {
             } else if widgets::secondary(ui, Some("radar"), "Detect").clicked() {
                 app.detect_backends();
             }
+            if app.local_setup_job.is_some() {
+                ui.add(crate::widgets::Spinner::new().color(t.accent));
+            } else if widgets::secondary(ui, None, "Use local servers").clicked() {
+                let job = app.act("ai_use_local", serde_json::json!({}), tr("Use local servers"));
+                app.local_setup_job = Some(job);
+            }
             tab
         })
         .inner;
@@ -2528,5 +2534,25 @@ mod model_options_tests {
         assert!(h.state().hub.saved_backend_key("OpenAI").unwrap());
         let stored = std::fs::read_to_string(&keys_path).unwrap_or_default();
         assert!(stored.contains("sk-first-run-key"), "{stored}");
+    }
+}
+
+#[cfg(test)]
+mod use_local_tests {
+    #[test]
+    fn use_local_servers_runs_off_the_window_thread() {
+        let engine = craft_anything_engine::Engine::shared(craft_anything_engine::testing::session(), craft_anything_ai::tools());
+        let mut app = crate::demo::app(engine);
+        let job =
+            app.act("ai_use_local", serde_json::json!({"lemonade": "http://127.0.0.1:9/v1", "lmstudio": "http://127.0.0.1:9/v1"}), "Use local servers".into());
+        assert!(app.jobs.list.iter().any(|info| info.id == job && info.outcome.is_none()), "the click returns while the look is still running");
+        assert!(app.state.toasts.is_empty());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.jobs.list.iter().any(|info| info.id == job && info.outcome.is_none()) && std::time::Instant::now() < deadline {
+            app.take_finished_jobs();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.state.toasts.iter().any(|(text, err)| *err && text.contains("answered")), "{:?}", app.state.toasts);
+        assert!(app.hub.config().get("Lemonade").is_none());
     }
 }
